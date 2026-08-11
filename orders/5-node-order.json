@@ -1,0 +1,149 @@
+{
+  "headerId": 1,
+  "timestamp": "2026-08-11T00:00:00.000Z",
+  "version": "3.0.0",
+  "manufacturer": "KIT",
+  "serialNumber": "0001",
+  "orderId": "test-order-1",
+  "orderUpdateId": 0,
+  "orderDescription": "Straight line, 5 stops",
+  "nodes": [
+    {
+      "nodeId": "n_A",
+      "sequenceId": 0,
+      "nodeDescriptor": "start",
+      "released": true,
+      "nodePosition": {
+        "x": 0.0,
+        "y": 0.0,
+        "theta": 0.0,
+        "mapId": "floor1",
+        "allowedDeviationXY": { "a": 0.1, "b": 0.1, "theta": 0.0 },
+        "allowedDeviationTheta": 0.1
+      },
+      "actions": []
+    },
+    {
+      "nodeId": "n_B",
+      "sequenceId": 2,
+      "nodeDescriptor": "stop 1",
+      "released": true,
+      "nodePosition": {
+        "x": 2.0,
+        "y": 0.0,
+        "theta": 0.0,
+        "mapId": "floor1",
+        "allowedDeviationXY": { "a": 0.1, "b": 0.1, "theta": 0.0 },
+        "allowedDeviationTheta": 0.1
+      },
+      "actions": []
+    },
+    {
+      "nodeId": "n_C",
+      "sequenceId": 4,
+      "nodeDescriptor": "stop 2",
+      "released": true,
+      "nodePosition": {
+        "x": 4.0,
+        "y": 1.0,
+        "theta": 0.0,
+        "mapId": "floor1",
+        "allowedDeviationXY": { "a": 0.1, "b": 0.1, "theta": 0.0 },
+        "allowedDeviationTheta": 0.1
+      },
+      "actions": []
+    },
+    {
+      "nodeId": "n_D",
+      "sequenceId": 6,
+      "nodeDescriptor": "stop 3",
+      "released": true,
+      "nodePosition": {
+        "x": 6.0,
+        "y": 1.0,
+        "theta": 0.0,
+        "mapId": "floor1",
+        "allowedDeviationXY": { "a": 0.1, "b": 0.1, "theta": 0.0 },
+        "allowedDeviationTheta": 0.1
+      },
+      "actions": []
+    },
+    {
+      "nodeId": "n_E",
+      "sequenceId": 8,
+      "nodeDescriptor": "end",
+      "released": true,
+      "nodePosition": {
+        "x": 8.0,
+        "y": 0.0,
+        "theta": 0.0,
+        "mapId": "floor1",
+        "allowedDeviationXY": { "a": 0.1, "b": 0.1, "theta": 0.0 },
+        "allowedDeviationTheta": 0.1
+      },
+      "actions": []
+    }
+  ],
+  "edges": [
+    {
+      "edgeId": "e_1",
+      "sequenceId": 1,
+      "startNodeId": "n_A",
+      "endNodeId": "n_B",
+      "released": true,
+      "maximumSpeed": 1.0,
+      "maximumMobileRobotHeight": 2.0,
+      "orientation": 0.0,
+      "orientationType": "TANGENTIAL",
+      "rotationAllowed": true,
+      "trajectory": { "degree": 1, "knotVector": [], "controlPoints": [] },
+      "corridor": {},
+      "actions": []
+    },
+    {
+      "edgeId": "e_2",
+      "sequenceId": 3,
+      "startNodeId": "n_B",
+      "endNodeId": "n_C",
+      "released": true,
+      "maximumSpeed": 1.0,
+      "maximumMobileRobotHeight": 2.0,
+      "orientation": 0.0,
+      "orientationType": "TANGENTIAL",
+      "rotationAllowed": true,
+      "trajectory": { "degree": 1, "knotVector": [], "controlPoints": [] },
+      "corridor": {},
+      "actions": []
+    },
+    {
+      "edgeId": "e_3",
+      "sequenceId": 5,
+      "startNodeId": "n_C",
+      "endNodeId": "n_D",
+      "released": true,
+      "maximumSpeed": 1.0,
+      "maximumMobileRobotHeight": 2.0,
+      "orientation": 0.0,
+      "orientationType": "TANGENTIAL",
+      "rotationAllowed": true,
+      "trajectory": { "degree": 1, "knotVector": [], "controlPoints": [] },
+      "corridor": {},
+      "actions": []
+    },
+    {
+      "edgeId": "e_4",
+      "sequenceId": 7,
+      "startNodeId": "n_D",
+      "endNodeId": "n_E",
+      "released": true,
+      "maximumSpeed": 1.0,
+      "maximumMobileRobotHeight": 2.0,
+      "orientation": 0.0,
+      "orientationType": "TANGENTIAL",
+      "rotationAllowed": true,
+      "trajectory": { "degree": 1, "knotVector": [], "controlPoints": [] },
+      "corridor": {},
+      "actions": []
+    }
+  ]
+}

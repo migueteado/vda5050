@@ -8,9 +8,9 @@ import (
 const VERSION string = "3.0.0"
 
 type Header struct {
-	HeaderId uint32 `json:"headerId"`
-	Timestamp string `json:"timestamp"`
-	Version string `json:"version"`
+	HeaderId     uint32 `json:"headerId"`
+	Timestamp    string `json:"timestamp"`
+	Version      string `json:"version"`
 	Manufacturer string `json:"manufacturer"`
 	SerialNumber string `json:"serialNumber"`
 }
@@ -33,9 +33,9 @@ func (hg *HeaderGenerator) Next(topic string) uint32 {
 
 func (hg *HeaderGenerator) Generate(topic, manufacturer, serialNumber string) *Header {
 	return &Header{
-		HeaderId: hg.Next(topic),
-		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		Version: VERSION,
+		HeaderId:     hg.Next(topic),
+		Timestamp:    time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		Version:      VERSION,
 		Manufacturer: manufacturer,
 		SerialNumber: serialNumber,
 	}

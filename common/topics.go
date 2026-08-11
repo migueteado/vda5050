@@ -5,20 +5,22 @@ import (
 	"strings"
 )
 
-const INTERFACE_NAME string = "vda5050"
-const MAJOR_VERSION = "v3"
+const (
+	INTERFACE_NAME string = "vda5050"
+	MAJOR_VERSION  string = "v3"
+)
 
 type TopicName string
 
 const (
-	Order TopicName = "order" // fleet -> robot, mandatory
+	Order          TopicName = "order"          // fleet -> robot, mandatory
 	InstantActions TopicName = "instantActions" // fleet -> robot, mandatory
-	State TopicName = "state" // robot -> fleet, mandatory
-	Connection TopicName = "connection" // robot -> fleet, mandatory
-	Factsheet TopicName = "factsheet" // robot -> fleet, mandatory
-	Visualization TopicName = "visualization" // robot -> UI, optional
-	ZoneSet TopicName = "zoneSet" // fleet -> robot, optional
-	Responses TopicName = "responses" // fleet -> robot, optional
+	State          TopicName = "state"          // robot -> fleet, mandatory
+	Connection     TopicName = "connection"     // robot -> fleet, mandatory
+	Factsheet      TopicName = "factsheet"      // robot -> fleet, mandatory
+	Visualization  TopicName = "visualization"  // robot -> UI, optional
+	ZoneSet        TopicName = "zoneSet"        // fleet -> robot, optional
+	Responses      TopicName = "responses"      // fleet -> robot, optional
 )
 
 var ALL_TOPICS = []TopicName{Order, InstantActions, State, Connection, Factsheet, Visualization, ZoneSet, Responses}
@@ -29,36 +31,37 @@ var FLEET_TO_ROBOT = []TopicName{Order, InstantActions, ZoneSet, Responses}
 // Published by the robot, subscribed by fleet control / visualization
 var ROBOT_TO_FLEET = []TopicName{State, Connection, Factsheet, Visualization}
 
-// Quality of service. 0 for everything except 'connection', which is QoS 1 
-//because a death notice is the one message that nothing later supersedes
+// Quality of service. 0 for everything except 'connection', which is QoS 1
+// because a death notice is the one message that nothing later supersedes
 var QOS = map[TopicName]int{
-	Order: 0,
+	Order:          0,
 	InstantActions: 0,
-	State: 0,
-	Connection: 1,
-	Factsheet: 0,
-	Visualization: 0,
-	ZoneSet: 0,
-	Responses: 0,
+	State:          0,
+	Connection:     1,
+	Factsheet:      0,
+	Visualization:  0,
+	ZoneSet:        0,
+	Responses:      0,
 }
 
-// Retained so a fleet manager that starts later immediately learns the 
+// Retained so a fleet manager that starts later immediately learns the
 // current connection state of every robot
 var RETAINED = []TopicName{Connection}
 
-
 // --- VALIDATION ------------------------------------------------------
 
-var FORBIDDEN_CHARS = []string{"/", "+", "#", "$"}
-var ALLOWED_CHARS = []string{
-	"abcdefghijklmnopqrstuvwxyz",
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-	"0123456789",
-	"_.:-",
-}
+var (
+	FORBIDDEN_CHARS = []string{"/", "+", "#", "$"}
+	ALLOWED_CHARS   = []string{
+		"abcdefghijklmnopqrstuvwxyz",
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+		"0123456789",
+		"_.:-",
+	}
+)
 
 type TopicError struct {
-	Topic string
+	Topic  string
 	Reason string
 }
 
@@ -67,7 +70,7 @@ func (e *TopicError) Error() string {
 }
 
 type FieldError struct {
-	Field string
+	Field  string
 	Reason string
 }
 
@@ -88,7 +91,7 @@ func ValidateSegment(field, value string) error {
 }
 
 func ValidateSerial(serial string) error {
-	err :=  ValidateSegment("serial", serial)
+	err := ValidateSegment("serial", serial)
 	if err != nil {
 		return err
 	}
@@ -127,7 +130,6 @@ func TopicFor(manufacturer string, serial string, topic TopicName) (string, erro
 	}
 	return fmt.Sprintf("%s/%s/%s/%s/%s", INTERFACE_NAME, MAJOR_VERSION, manufacturer, serial, topic), nil
 }
-
 
 func WildcardFor(topic string) (string, error) {
 	err := ValidateTopicName(topic)
