@@ -3,17 +3,10 @@ package common
 import (
 	"sync"
 	"time"
+	"vda5050/common/models"
 )
 
 const VERSION string = "3.0.0"
-
-type Header struct {
-	HeaderId     uint32 `json:"headerId"`
-	Timestamp    string `json:"timestamp"`
-	Version      string `json:"version"`
-	Manufacturer string `json:"manufacturer"`
-	SerialNumber string `json:"serialNumber"`
-}
 
 type HeaderGenerator struct {
 	mu sync.Mutex
@@ -31,8 +24,8 @@ func (hg *HeaderGenerator) Next(topic string) uint32 {
 	return hg.id[topic]
 }
 
-func (hg *HeaderGenerator) Generate(topic, manufacturer, serialNumber string) *Header {
-	return &Header{
+func (hg *HeaderGenerator) Generate(topic, manufacturer, serialNumber string) *models.Header {
+	return &models.Header{
 		HeaderId:     hg.Next(topic),
 		Timestamp:    time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 		Version:      VERSION,

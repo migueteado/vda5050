@@ -4,11 +4,15 @@
   <title>VDA 5050 viewer</title>
   <style>
     body { font-family: sans-serif; display: flex; gap: 20px; }
-    #robots { display: flex; flex-direction: column; gap: 4px; max-width: 320px; }
+    #robots { display: flex; flex-direction: column; gap: 6px; max-width: 340px; }
     .robot-row {
-      display: flex; justify-content: space-between;
+      display: flex; flex-direction: column; gap: 2px;
       padding: 6px 10px; border-radius: 4px; color: white;
+      outline: 3px solid transparent;
+      font-size: 13px;
     }
+    .robot-row .title { font-weight: bold; }
+    .robot-row .newBaseRequest { color: #fff59d; font-weight: bold; }
     #graph { border: 1px solid #ccc; background: #fafafa; }
     #controls { display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
     textarea { width: 100%; height: 300px; font-family: monospace; font-size: 12px; }
@@ -25,6 +29,12 @@
     <textarea id="orderJson" placeholder="paste order JSON"></textarea>
     <button id="sendOrder">Send Order</button>
     <div id="sendStatus"></div>
+
+    <h2>Session 4 experiments</h2>
+    <button id="sendBase">Send demo base order</button>
+    <button id="sendGoodUpdate">Send demo update</button>
+    <button id="sendBadUpdate">Send bad update</button>
+    <button id="dropToggle">Drop next update: OFF</button>
   </div>
 
   <script>
@@ -36,14 +46,17 @@
     };
 
     const rows = new Map();
+    // Per-robot data merged from whichever topic last touched it -
+    // Connection gives connectionState, State gives everything else.
+    // Nothing here assumes both have arrived yet.
+    const robotData = new Map();
     const robotsEl = document.getElementById("robots");
 
     function rowId(msg) {
       return `${msg.manufacturer}/${msg.serialNumber}`;
     }
 
-    function renderConnection(msg) {
-      const id = rowId(msg);
+    function rowFor(id) {
       let row = rows.get(id);
       if (!row) {
         row = document.createElement("div");
@@ -51,8 +64,36 @@
         rows.set(id, row);
         robotsEl.appendChild(row);
       }
-      row.textContent = `${id} — ${msg.connectionState}`;
-      row.style.backgroundColor = COLORS[msg.connectionState] || "#000";
+      return row;
+    }
+
+    function renderRobot(id) {
+      const row = rowFor(id);
+      const data = robotData.get(id) || {};
+
+      row.style.backgroundColor = COLORS[data.connectionState] || "#000";
+      row.style.outlineColor = data.newBaseRequest ? "#f9a825" : "transparent";
+
+      const remaining = data.nodeStates ? data.nodeStates.length : "?";
+      const errorCount = data.errors ? data.errors.length : 0;
+      const battery = data.powerSupply
+        ? `${data.powerSupply.stateOfCharge.toFixed(0)}%`
+        : "?";
+
+      row.innerHTML = `
+        <div class="title">${id} — ${data.connectionState || "UNKNOWN"}</div>
+        <div>mode: ${data.operatingMode || "?"} | driving: ${data.driving ?? "?"} | paused: ${data.paused ?? "?"}</div>
+        <div>battery: ${battery} | lastNode: ${data.lastNodeId || "(none)"}</div>
+        <div>remaining nodes: ${remaining} | errors: ${errorCount}</div>
+        ${data.newBaseRequest ? '<div class="newBaseRequest">⚠ newBaseRequest — needs more base</div>' : ""}
+      `;
+    }
+
+    function mergeRobotData(msg) {
+      const id = rowId(msg);
+      const data = Object.assign(robotData.get(id) || {}, msg);
+      robotData.set(id, data);
+      renderRobot(id);
     }
 
     // Graph drawing — nodes/edges come from whatever order was last sent
@@ -62,12 +103,34 @@
     const SCALE = 40; // px per metre
     const ORIGIN = { x: 40, y: canvas.height - 40 };
 
+    // The viewer only ever sees whatever order/update JSON was last
+    // sent, and an update only carries the stitching node onward (the
+    // base before it is never resent - see order_state.go's stitch()).
+    // So the picture is accumulated by id across sends rather than
+    // replaced wholesale, or every update would erase the base drawn
+    // by the order before it.
+    let graph = { orderId: null, nodesById: new Map(), edgesById: new Map() };
     let currentOrder = null;
     let robotPos = null;
+
+    function mergeOrder(order) {
+      if (graph.orderId !== order.orderId) {
+        graph = { orderId: order.orderId, nodesById: new Map(), edgesById: new Map() };
+        robotPos = null;
+      }
+      for (const n of order.nodes) graph.nodesById.set(n.nodeId, n);
+      for (const e of order.edges) graph.edgesById.set(e.edgeId, e);
+      currentOrder = {
+        nodes: [...graph.nodesById.values()],
+        edges: [...graph.edgesById.values()],
+      };
+    }
 
     function toCanvas(x, y) {
       return { x: ORIGIN.x + x * SCALE, y: ORIGIN.y - y * SCALE };
     }
+
+    let lastError = null;
 
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -75,6 +138,9 @@
 
       const nodeById = new Map(currentOrder.nodes.map((n) => [n.nodeId, n]));
 
+      // Base (released) edges/nodes draw solid; horizon (not yet
+      // released) edges/nodes draw dashed — the base/horizon split
+      // that's the heart of the protocol, made visible.
       ctx.strokeStyle = "#888";
       ctx.lineWidth = 2;
       for (const edge of currentOrder.edges) {
@@ -83,19 +149,29 @@
         if (!a || !b) continue;
         const pa = toCanvas(a.nodePosition.x, a.nodePosition.y);
         const pb = toCanvas(b.nodePosition.x, b.nodePosition.y);
+        ctx.setLineDash(edge.released ? [] : [6, 4]);
         ctx.beginPath();
         ctx.moveTo(pa.x, pa.y);
         ctx.lineTo(pb.x, pb.y);
         ctx.stroke();
       }
+      ctx.setLineDash([]);
 
-      ctx.fillStyle = "#1565c0";
       ctx.font = "12px sans-serif";
       for (const node of currentOrder.nodes) {
         const p = toCanvas(node.nodePosition.x, node.nodePosition.y);
         ctx.beginPath();
         ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
-        ctx.fill();
+        if (node.released) {
+          ctx.fillStyle = "#1565c0";
+          ctx.fill();
+        } else {
+          ctx.setLineDash([3, 2]);
+          ctx.strokeStyle = "#1565c0";
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.fillStyle = "#1565c0";
         ctx.fillText(node.nodeId, p.x + 8, p.y - 8);
       }
 
@@ -105,22 +181,73 @@
         ctx.beginPath();
         ctx.arc(p.x, p.y, 7, 0, 2 * Math.PI);
         ctx.fill();
+
+        if (lastError) {
+          ctx.fillStyle = "#c62828";
+          ctx.font = "bold 12px sans-serif";
+          ctx.fillText(lastError.errorType, p.x + 12, p.y + 14);
+          ctx.font = "12px sans-serif";
+          ctx.fillText(lastError.errorDescription, p.x + 12, p.y + 28);
+        }
       }
     }
+
+    let errorClearTimer = null;
 
     const ws = new WebSocket(`ws://${location.host}/ws`);
     ws.onopen = () => console.log("connected");
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if ("connectionState" in msg) {
-        renderConnection(msg);
+        mergeRobotData(msg);
+      } else if ("lastNodeSequenceId" in msg) {
+        // State message - the only one carrying this field.
+        mergeRobotData(msg);
+      } else if ("nodes" in msg) {
+        // Order message - published by anyone (a demo button here,
+        // fleet's dispatcher releasing another window, mosquitto_pub).
+        // Merge it the same way regardless of who sent it, so the
+        // canvas reflects the base actually on the wire, not just
+        // what this tab happened to click.
+        mergeOrder(msg);
+        draw();
       } else if ("agvPosition" in msg) {
         robotPos = msg.agvPosition;
         draw();
+      } else if ("errorType" in msg) {
+        lastError = msg;
+        draw();
+        clearTimeout(errorClearTimer);
+        errorClearTimer = setTimeout(() => {
+          lastError = null;
+          draw();
+        }, 6000);
       }
     };
 
-    document.getElementById("sendOrder").onclick = async () => {
+    // sendOrder posts whatever order JSON is given (from the textarea,
+    // or from one of the canned demo buttons below) and reports back
+    // whether the viewer's drop gate swallowed it.
+    async function sendOrder(order, statusEl) {
+      // No optimistic local merge - the canvas now updates only once
+      // the order actually round-trips back over the Order topic
+      // subscription below, so a dropped update correctly shows
+      // nothing changing on the graph.
+      const res = await fetch(
+        `/order/${order.manufacturer}/${order.serialNumber}`,
+        { method: "POST", body: JSON.stringify(order) }
+      );
+      if (!res.ok) {
+        statusEl.textContent = `error: ${res.status} ${await res.text()}`;
+        return;
+      }
+      const body = await res.json();
+      statusEl.textContent = body.dropped
+        ? "update DROPPED (simulated) - robot never saw it"
+        : "order sent";
+    }
+
+    document.getElementById("sendOrder").onclick = () => {
       const statusEl = document.getElementById("sendStatus");
       let order;
       try {
@@ -129,18 +256,97 @@
         statusEl.textContent = `invalid JSON: ${e.message}`;
         return;
       }
+      sendOrder(order, statusEl);
+    };
 
-      currentOrder = order;
-      robotPos = null;
-      draw();
+    // --- Session 4 demo orders (mirrors fleet/publish.go) ---
 
-      const res = await fetch(
-        `/order/${order.manufacturer}/${order.serialNumber}`,
-        { method: "POST", body: JSON.stringify(order) }
-      );
-      statusEl.textContent = res.ok
-        ? "order sent"
-        : `error: ${res.status} ${await res.text()}`;
+    function demoNodePosition(x, y) {
+      return {
+        x, y, theta: 0, mapId: "floor1",
+        allowedDeviationXY: { a: 0.1, b: 0.1, theta: 0 },
+        allowedDeviationTheta: 0.1,
+      };
+    }
+
+    const demoHeader = () => ({
+      headerId: 1,
+      timestamp: new Date().toISOString(),
+      version: "3.0.0",
+      manufacturer: "KIT",
+      serialNumber: "0001",
+    });
+
+    // base order: releases n_A, n_B, n_C; n_D/n_E are horizon.
+    // decision point is n_C.
+    function demoBaseOrder() {
+      return {
+        ...demoHeader(),
+        orderId: "demo-order-1",
+        orderUpdateId: 0,
+        nodes: [
+          { nodeId: "n_A", sequenceId: 0, released: true, nodePosition: demoNodePosition(0, 0), actions: [] },
+          { nodeId: "n_B", sequenceId: 2, released: true, nodePosition: demoNodePosition(2, 0), actions: [] },
+          { nodeId: "n_C", sequenceId: 4, released: true, nodePosition: demoNodePosition(4, 1), actions: [] },
+          { nodeId: "n_D", sequenceId: 6, released: false, nodePosition: demoNodePosition(6, 1), actions: [] },
+          { nodeId: "n_E", sequenceId: 8, released: false, nodePosition: demoNodePosition(8, 0), actions: [] },
+        ],
+        edges: [
+          { edgeId: "e_1", sequenceId: 1, startNodeId: "n_A", endNodeId: "n_B", released: true, maximumSpeed: 1.0, actions: [] },
+          { edgeId: "e_2", sequenceId: 3, startNodeId: "n_B", endNodeId: "n_C", released: true, maximumSpeed: 1.0, actions: [] },
+          { edgeId: "e_3", sequenceId: 5, startNodeId: "n_C", endNodeId: "n_D", released: false, maximumSpeed: 1.0, actions: [] },
+          { edgeId: "e_4", sequenceId: 7, startNodeId: "n_D", endNodeId: "n_E", released: false, maximumSpeed: 1.0, actions: [] },
+        ],
+      };
+    }
+
+    // good update: stitches onto n_C, releases n_D. n_E stays horizon.
+    function demoGoodUpdate() {
+      return {
+        ...demoHeader(),
+        orderId: "demo-order-1",
+        orderUpdateId: 1,
+        nodes: [
+          { nodeId: "n_C", sequenceId: 4, released: true, nodePosition: demoNodePosition(4, 1), actions: [] },
+          { nodeId: "n_D", sequenceId: 6, released: true, nodePosition: demoNodePosition(6, 1), actions: [] },
+          { nodeId: "n_E", sequenceId: 8, released: false, nodePosition: demoNodePosition(8, 0), actions: [] },
+        ],
+        edges: [
+          { edgeId: "e_3", sequenceId: 5, startNodeId: "n_C", endNodeId: "n_D", released: true, maximumSpeed: 1.0, actions: [] },
+          { edgeId: "e_4", sequenceId: 7, startNodeId: "n_D", endNodeId: "n_E", released: false, maximumSpeed: 1.0, actions: [] },
+        ],
+      };
+    }
+
+    // bad update: stitches onto n_B instead of the real decision point
+    // (n_C) - AcceptOrder must reject it via checks 9/10.
+    function demoBadUpdate() {
+      return {
+        ...demoHeader(),
+        orderId: "demo-order-1",
+        orderUpdateId: 1,
+        nodes: [
+          { nodeId: "n_B", sequenceId: 2, released: true, nodePosition: demoNodePosition(2, 0), actions: [] },
+          { nodeId: "n_D", sequenceId: 6, released: true, nodePosition: demoNodePosition(6, 1), actions: [] },
+        ],
+        edges: [
+          { edgeId: "e_x", sequenceId: 3, startNodeId: "n_B", endNodeId: "n_D", released: true, maximumSpeed: 1.0, actions: [] },
+        ],
+      };
+    }
+
+    document.getElementById("sendBase").onclick = () =>
+      sendOrder(demoBaseOrder(), document.getElementById("sendStatus"));
+    document.getElementById("sendGoodUpdate").onclick = () =>
+      sendOrder(demoGoodUpdate(), document.getElementById("sendStatus"));
+    document.getElementById("sendBadUpdate").onclick = () =>
+      sendOrder(demoBadUpdate(), document.getElementById("sendStatus"));
+
+    document.getElementById("dropToggle").onclick = async () => {
+      const btn = document.getElementById("dropToggle");
+      const res = await fetch("/drop-toggle", { method: "POST" });
+      const body = await res.json();
+      btn.textContent = `Drop next update: ${body.armed ? "ON" : "OFF"}`;
     };
   </script>
 </body>

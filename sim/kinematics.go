@@ -2,63 +2,112 @@ package sim
 
 import (
 	"math"
+	"sync"
 	"time"
 
+	"vda5050/common/geometry"
 	"vda5050/common/models"
 )
 
 const tickRate = 100 * time.Millisecond // 10 Hz
 
-type Position struct {
-	X     float64
-	Y     float64
-	Theta float64
-}
-
-// Simulator drives an already-validated Order in a straight line from
-// node to node, at each edge's maximumSpeed, ticking at 10 Hz. It uses
-// the destination node's allowedDeviationXY ellipse to decide when it
-// has "arrived" rather than waiting for an exact coordinate match.
+// Simulator drives a stitched nodes/edges chain in a straight line
+// from node to node, at each edge's maximumSpeed, ticking at 10 Hz. It
+// uses the destination node's allowedDeviationXY ellipse to decide
+// when it has "arrived" rather than waiting for an exact coordinate
+// match.
+//
+// It only drives through released edges. When it reaches an
+// unreleased edge (the decision point) it blocks until Extend
+// supplies a newer nodes/edges chain — mirroring the spec's rule that
+// the robot stops and waits at its decision point until fleet control
+// extends the base.
 type Simulator struct {
-	order    models.Order
+	mu       sync.Mutex
+	nodes    []models.Node
+	edges    []models.Edge
 	edgeIdx  int
-	position Position
+	position geometry.Position
+	wake     chan struct{}
 }
 
-func NewSimulator(order models.Order) *Simulator {
-	start := order.Nodes[0].NodePosition
+func NewSimulator(nodes []models.Node, edges []models.Edge) *Simulator {
+	start := nodes[0].NodePosition
 	return &Simulator{
-		order:    order,
-		position: Position{X: start.X, Y: start.Y, Theta: start.Theta},
+		nodes:    nodes,
+		edges:    edges,
+		position: geometry.Position{X: start.X, Y: start.Y, Theta: start.Theta},
+		wake:     make(chan struct{}, 1),
 	}
 }
 
-// Run blocks until every edge has been traversed, calling onTick once
-// per 10 Hz tick with the current position and, on arrival, the nodeId
-// just reached (empty string otherwise).
-func (s *Simulator) Run(onTick func(pos Position, arrivedNodeId string)) {
+// Extend replaces the simulator's known nodes/edges with a freshly
+// stitched chain (an accepted order update) and wakes the driving loop
+// if it was blocked waiting at a decision point.
+func (s *Simulator) Extend(nodes []models.Node, edges []models.Edge) {
+	s.mu.Lock()
+	s.nodes = nodes
+	s.edges = edges
+	s.mu.Unlock()
+
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Position returns the simulator's current position.
+func (s *Simulator) Position() geometry.Position {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.position
+}
+
+// canDrive reports whether there is a released edge left to traverse.
+func (s *Simulator) canDrive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.edgeIdx < len(s.edges) && s.edges[s.edgeIdx].Released
+}
+
+// Driving reports whether the robot is actively moving right now, as
+// opposed to stopped at a decision point waiting for more base.
+func (s *Simulator) Driving() bool {
+	return s.canDrive()
+}
+
+// Run blocks forever, calling onTick once per 10 Hz tick while driving
+// and pausing at each decision point until Extend is called.
+func (s *Simulator) Run(onTick func(pos geometry.Position, arrivedNodeId string)) {
 	ticker := time.NewTicker(tickRate)
 	defer ticker.Stop()
 
-	for s.edgeIdx < len(s.order.Edges) {
+	for {
+		if !s.canDrive() {
+			<-s.wake
+			continue
+		}
 		<-ticker.C
 		arrivedNodeId := s.step()
-		onTick(s.position, arrivedNodeId)
+		onTick(s.Position(), arrivedNodeId)
 	}
 }
 
 // step advances the simulation by one tick and returns the nodeId just
 // arrived at, or "" if still travelling.
 func (s *Simulator) step() string {
-	edge := s.order.Edges[s.edgeIdx]
-	target := s.order.Nodes[s.edgeIdx+1]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	edge := s.edges[s.edgeIdx]
+	target := s.nodes[s.edgeIdx+1]
 
 	dx := target.NodePosition.X - s.position.X
 	dy := target.NodePosition.Y - s.position.Y
 	dist := math.Hypot(dx, dy)
 
-	if insideDeviationEllipse(s.position, target.NodePosition) {
-		s.position = Position{
+	if geometry.InsideDeviationEllipse(s.position, target.NodePosition) {
+		s.position = geometry.Position{
 			X:     target.NodePosition.X,
 			Y:     target.NodePosition.Y,
 			Theta: target.NodePosition.Theta,
@@ -77,26 +126,4 @@ func (s *Simulator) step() string {
 	s.position.Theta = math.Atan2(dy, dx)
 
 	return ""
-}
-
-// insideDeviationEllipse implements the §6.6.2 test: transform the
-// point into the ellipse's frame (rotated by theta, centred on the
-// node), then check it against the semi-major/semi-minor axes. a=b=0
-// means "as precise as technically possible" — fall back to a tiny
-// epsilon rather than a degenerate zero-area ellipse.
-func insideDeviationEllipse(p Position, node models.NodePosition) bool {
-	dev := node.AllowedDeviationXY
-	if dev.A == 0 && dev.B == 0 {
-		const epsilon = 0.01
-		return math.Hypot(p.X-node.X, p.Y-node.Y) <= epsilon
-	}
-
-	dx := p.X - node.X
-	dy := p.Y - node.Y
-
-	cos, sin := math.Cos(dev.Theta), math.Sin(dev.Theta)
-	rx := dx*cos + dy*sin
-	ry := -dx*sin + dy*cos
-
-	return (rx*rx)/(dev.A*dev.A)+(ry*ry)/(dev.B*dev.B) <= 1
 }

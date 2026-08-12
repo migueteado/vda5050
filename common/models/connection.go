@@ -1,7 +1,5 @@
 package models
 
-import "vda5050/common"
-
 type ConnectionState string
 
 const (
@@ -12,6 +10,6 @@ const (
 )
 
 type Connection struct {
-	common.Header
+	Header
 	ConnectionState ConnectionState `json:"connectionState"`
 }

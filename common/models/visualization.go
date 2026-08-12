@@ -1,12 +1,10 @@
 package models
 
-import "vda5050/common"
-
 // Minimal visualization message — just enough to drive the viewer's
 // moving marker. The full agvPosition shape (localizationScore,
 // deviationRange, ...) is Session 5/8 content.
 type Visualization struct {
-	common.Header
+	Header
 	AgvPosition struct {
 		X     float64 `json:"x"`
 		Y     float64 `json:"y"`

@@ -1,10 +1,12 @@
 package models
 
 import (
-	"fmt"
-	"sort"
+	"encoding/json"
 
-	"vda5050/common"
+	vdaerrors "vda5050/common/errors"
+	"vda5050/common/geometry"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 type OrientationType string
@@ -14,28 +16,13 @@ const (
 	ORIENTATION_GLOBAL     OrientationType = "GLOBAL"
 )
 
-type Action struct{}
-
-type NodePosition struct {
-	X                  float64 `json:"x"`
-	Y                  float64 `json:"y"`
-	Theta              float64 `json:"theta"`
-	MapId              string  `json:"mapId"`
-	AllowedDeviationXY struct {
-		A     float64 `json:"a"`
-		B     float64 `json:"b"`
-		Theta float64 `json:"theta"`
-	} `json:"allowedDeviationXY"`
-	AllowedDeviationTheta float64 `json:"allowedDeviationTheta"`
-}
-
 type Node struct {
-	NodeId         string       `json:"nodeId"`
-	SequenceId     int          `json:"sequenceId"`
-	NodeDescriptor string       `json:"nodeDescriptor"`
-	Released       bool         `json:"released"`
-	NodePosition   NodePosition `json:"nodePosition"`
-	Actions        []Action     `json:"actions"`
+	NodeId         string                `json:"nodeId"`
+	SequenceId     int                   `json:"sequenceId"`
+	NodeDescriptor string                `json:"nodeDescriptor"`
+	Released       bool                  `json:"released"`
+	NodePosition   geometry.NodePosition `json:"nodePosition"`
+	Actions        []Action              `json:"actions"`
 }
 
 type Trajectory struct {
@@ -61,7 +48,7 @@ type Edge struct {
 }
 
 type Order struct {
-	common.Header
+	Header
 	OrderId          string `json:"orderId"`
 	OrderUpdateId    int    `json:"orderUpdateId"`
 	OrderDescription string `json:"orderDescription"`
@@ -69,105 +56,10 @@ type Order struct {
 	Edges            []Edge `json:"edges"`
 }
 
-type Sequence struct {
-	SequenceId int
-	IsNode     bool
-	Node       *Node
-	Edge       *Edge
-}
-
-func Validate(order Order) error {
-	var sequence []Sequence = []Sequence{}
-
-	for _, node := range order.Nodes {
-		sequence = append(sequence, Sequence{
-			SequenceId: node.SequenceId,
-			IsNode:     true,
-			Node:       &node,
-			Edge:       nil,
-		})
+func Unmarshal(msg mqtt.Message) (Order, *vdaerrors.VDAError) {
+	var order Order
+	if err := json.Unmarshal(msg.Payload(), &order); err != nil {
+		return Order{}, vdaerrors.New(vdaerrors.ErrorTypeValidationFailure, err.Error())
 	}
-
-	for _, edge := range order.Edges {
-		sequence = append(sequence, Sequence{
-			SequenceId: edge.SequenceId,
-			IsNode:     false,
-			Node:       nil,
-			Edge:       &edge,
-		})
-	}
-
-	sort.Slice(sequence, func(i, j int) bool {
-		return sequence[i].SequenceId < sequence[j].SequenceId
-	})
-
-	seenUnreleased := false
-
-	for i, seq := range sequence {
-		// Verify that sequenceId is strictly increasing with no gaps
-		if i > 0 && seq.SequenceId != sequence[i-1].SequenceId+1 {
-			return fmt.Errorf("sequenceId at index %d is not strictly increasing", i)
-		}
-
-		// Nodes get even sequenceIds, edges get odd
-		if seq.IsNode && seq.SequenceId%2 != 0 {
-			return fmt.Errorf("node at index %d must have an even sequenceId", i)
-		}
-		if !seq.IsNode && seq.SequenceId%2 == 0 {
-			return fmt.Errorf("edge at index %d must have an odd sequenceId", i)
-		}
-
-		// Once an unreleased element is seen, nothing released may follow
-		released := seq.IsNode && seq.Node.Released || !seq.IsNode && seq.Edge.Released
-		if released && seenUnreleased {
-			return fmt.Errorf("element at index %d is released after an unreleased element", i)
-		}
-		if !released {
-			seenUnreleased = true
-		}
-
-		if i == 0 && !seq.IsNode {
-			return fmt.Errorf("order must start in a node")
-		}
-		if i == len(sequence)-1 && !seq.IsNode {
-			return fmt.Errorf("order must end in a node")
-		}
-
-		var prevSeq, nextSeq *Sequence
-		if i > 0 {
-			prevSeq = &sequence[i-1]
-		}
-		if i < len(sequence)-1 {
-			nextSeq = &sequence[i+1]
-		}
-
-		if seq.IsNode {
-			// Nodes must have edges on both sides (where a side exists)
-			if prevSeq != nil && prevSeq.IsNode {
-				return fmt.Errorf("node at index %d must have an edge on the left", i)
-			}
-			if nextSeq != nil && nextSeq.IsNode {
-				return fmt.Errorf("node at index %d must have an edge on the right", i)
-			}
-		} else {
-			// Edges must have nodes on both sides and the nodes must equal
-			// their startNode and endNode
-			if prevSeq == nil || !prevSeq.IsNode {
-				return fmt.Errorf("edge at index %d must have a node on the left", i)
-			} else if prevSeq.Node.NodeId != seq.Edge.StartNodeId {
-				return fmt.Errorf("edge at index %d has incorrect start node", i)
-			}
-			if nextSeq == nil || !nextSeq.IsNode {
-				return fmt.Errorf("edge at index %d must have a node on the right", i)
-			} else if nextSeq.Node.NodeId != seq.Edge.EndNodeId {
-				return fmt.Errorf("edge at index %d has incorrect end node", i)
-			}
-
-			if seq.Edge.Released && (!prevSeq.Node.Released || !nextSeq.Node.Released) {
-				return fmt.Errorf("edge at index %d is released but its nodes are not", i)
-			}
-		}
-	}
-
-	return nil
+	return order, nil
 }
