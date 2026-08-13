@@ -13,6 +13,14 @@
     }
     .robot-row .title { font-weight: bold; }
     .robot-row .newBaseRequest { color: #fff59d; font-weight: bold; }
+    .chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px; }
+    .chip {
+      font-size: 10px; padding: 1px 5px; border-radius: 3px;
+      color: white; cursor: default;
+    }
+    .chip.retriable { cursor: pointer; text-decoration: underline; }
+    .robot-controls { display: flex; gap: 4px; margin-top: 4px; }
+    .robot-controls button { font-size: 11px; padding: 2px 6px; }
     #graph { border: 1px solid #ccc; background: #fafafa; }
     #controls { display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
     textarea { width: 100%; height: 300px; font-family: monospace; font-size: 12px; }
@@ -67,6 +75,39 @@
       return row;
     }
 
+    const ACTION_STATUS_COLORS = {
+      WAITING: "#9e9e9e",
+      INITIALIZING: "#64b5f6",
+      RUNNING: "#1976d2",
+      PAUSED: "#f9a825",
+      RETRIABLE: "#ef6c00",
+      FINISHED: "#2e7d32",
+      FAILED: "#c62828",
+    };
+
+    function shortId(actionId) {
+      return actionId ? actionId.slice(0, 8) : "?";
+    }
+
+    // Action-queue strip: one chip per actionState, colour-coded by
+    // status. RETRIABLE chips are clickable - click to retry that
+    // specific action.
+    function actionChips(id, actionStates) {
+      if (!actionStates || !actionStates.length) return "";
+      const chips = actionStates.map((a) => {
+        const color = ACTION_STATUS_COLORS[a.actionStatus] || "#555";
+        const retriable = a.actionStatus === "RETRIABLE";
+        const cls = retriable ? "chip retriable" : "chip";
+        const onclick = retriable
+          ? `onclick="retryAction('${id}','${a.actionId}')"`
+          : "";
+        return `<span class="${cls}" style="background:${color}" ` +
+          `title="${a.actionType} — ${a.actionId}" ${onclick}>` +
+          `${shortId(a.actionId)}:${a.actionStatus}</span>`;
+      });
+      return `<div class="chips">${chips.join("")}</div>`;
+    }
+
     function renderRobot(id) {
       const row = rowFor(id);
       const data = robotData.get(id) || {};
@@ -86,7 +127,56 @@
         <div>battery: ${battery} | lastNode: ${data.lastNodeId || "(none)"}</div>
         <div>remaining nodes: ${remaining} | errors: ${errorCount}</div>
         ${data.newBaseRequest ? '<div class="newBaseRequest">⚠ newBaseRequest — needs more base</div>' : ""}
+        ${actionChips(id, data.actionStates)}
+        <div class="robot-controls">
+          <button onclick="sendInstantAction('${id}','cancelOrder')">Cancel Order</button>
+          <button onclick="sendInstantAction('${id}','startPause')">Pause</button>
+          <button onclick="sendInstantAction('${id}','stopPause')">Resume</button>
+        </div>
       `;
+    }
+
+    // sendInstantAction posts a single-action instantActions message
+    // for the given robot id ("manufacturer/serialNumber").
+    async function sendInstantAction(id, actionType) {
+      const [manufacturer, serialNumber] = id.split("/");
+      const msg = {
+        manufacturer,
+        serialNumber,
+        actions: [{
+          actionId: crypto.randomUUID(),
+          actionType,
+          blockingType: "NONE",
+          actionParameters: [],
+          retriable: false,
+        }],
+      };
+      await fetch(`/instant-action/${manufacturer}/${serialNumber}`, {
+        method: "POST",
+        body: JSON.stringify(msg),
+      });
+    }
+
+    // retryAction sends a retry instant action targeting actionId via
+    // an actionParameter (spec Table 4) - not the retry action's own
+    // actionId, which is a separate, freshly generated id.
+    async function retryAction(id, actionId) {
+      const [manufacturer, serialNumber] = id.split("/");
+      const msg = {
+        manufacturer,
+        serialNumber,
+        actions: [{
+          actionId: crypto.randomUUID(),
+          actionType: "retry",
+          blockingType: "NONE",
+          actionParameters: [{ key: "actionId", value: actionId }],
+          retriable: false,
+        }],
+      };
+      await fetch(`/instant-action/${manufacturer}/${serialNumber}`, {
+        method: "POST",
+        body: JSON.stringify(msg),
+      });
     }
 
     function mergeRobotData(msg) {

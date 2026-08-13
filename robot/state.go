@@ -118,10 +118,13 @@ func buildState(headerGen *common.HeaderGenerator, robot *Robot) models.State {
 		})
 	}
 
-	var driving bool
-	if robot.simulator != nil {
-		driving = robot.simulator.Driving()
-	}
+	// driving reflects whether the robot is actually moving right now -
+	// gated by released road AND the action queue AND startPause, not
+	// just the first of those.
+	driving := robot.simulator != nil &&
+		robot.simulator.Driving() &&
+		robot.actions.DrivingAllowed() &&
+		!robot.state.Paused
 
 	// newBaseRequest: fewer than 2 released-but-undriven nodes left in
 	// the base means fleet control must extend it soon, or the robot
@@ -134,19 +137,54 @@ func buildState(headerGen *common.HeaderGenerator, robot *Robot) models.State {
 	}
 	newBaseRequest := remainingBaseNodes < 2
 
+	// actionStates: the engine's real queue (reached nodes/edges),
+	// plus every not-yet-reached node/edge's actions reported WAITING
+	// (spec §6.6.9 - horizon actions are always visible, never a
+	// surprise once released).
+	actionStates := robot.actions.ActionStates()
+	for _, n := range robot.state.Nodes {
+		if n.SequenceId <= robot.state.LastNodeSequenceId {
+			continue
+		}
+		for _, a := range n.Actions {
+			actionStates = append(actionStates, models.ActionState{
+				ActionId:         a.ActionId,
+				ActionType:       a.ActionType,
+				ActionDescriptor: a.ActionDescriptor,
+				ActionStatus:     models.ActionStatusWaiting,
+			})
+		}
+	}
+	for _, ed := range robot.state.Edges {
+		if ed.SequenceId <= robot.state.LastNodeSequenceId {
+			continue
+		}
+		for _, a := range ed.Actions {
+			actionStates = append(actionStates, models.ActionState{
+				ActionId:         a.ActionId,
+				ActionType:       a.ActionType,
+				ActionDescriptor: a.ActionDescriptor,
+				ActionStatus:     models.ActionStatusWaiting,
+			})
+		}
+	}
+
 	header := headerGen.Generate(string(common.State), Manufacturer, SerialNumber)
 
 	return models.State{
-		Header:             *header,
-		OrderId:            robot.state.OrderId,
-		OrderUpdateId:      robot.state.OrderUpdateId,
-		LastNodeId:         robot.state.LastNodeId,
-		LastNodeSequenceId: robot.state.LastNodeSequenceId,
-		NodeStates:         nodeStates,
-		EdgeStates:         edgeStates,
-		Driving:            driving,
-		NewBaseRequest:     newBaseRequest,
-		OperatingMode:      models.OperatingModeAutomatic,
+		Header:              *header,
+		OrderId:             robot.state.OrderId,
+		OrderUpdateId:       robot.state.OrderUpdateId,
+		LastNodeId:          robot.state.LastNodeId,
+		LastNodeSequenceId:  robot.state.LastNodeSequenceId,
+		NodeStates:          nodeStates,
+		EdgeStates:          edgeStates,
+		Driving:             driving,
+		Paused:              robot.state.Paused,
+		NewBaseRequest:      newBaseRequest,
+		ActionStates:        actionStates,
+		InstantActionStates: robot.instantActionStates,
+		OperatingMode:       models.OperatingModeAutomatic,
 		// No battery model yet - permanently-powered stand-in per
 		// spec §7.8 ("For permanently powered mobile robots, this
 		// field shall be 100").

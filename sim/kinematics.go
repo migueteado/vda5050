@@ -23,12 +23,13 @@ const tickRate = 100 * time.Millisecond // 10 Hz
 // the robot stops and waits at its decision point until fleet control
 // extends the base.
 type Simulator struct {
-	mu       sync.Mutex
-	nodes    []models.Node
-	edges    []models.Edge
-	edgeIdx  int
-	position geometry.Position
-	wake     chan struct{}
+	mu        sync.Mutex
+	nodes     []models.Node
+	edges     []models.Edge
+	edgeIdx   int
+	position  geometry.Position
+	wake      chan struct{}
+	driveGate func() bool
 }
 
 func NewSimulator(nodes []models.Node, edges []models.Edge) *Simulator {
@@ -54,6 +55,16 @@ func (s *Simulator) Extend(nodes []models.Node, edges []models.Edge) {
 	case s.wake <- struct{}{}:
 	default:
 	}
+}
+
+// SetDriveGate installs a check that must return true for the
+// simulator to actually move on a tick - e.g. the action queue's
+// DrivingAllowed() or a startPause/stopPause flag. A nil gate (the
+// default) never holds driving back.
+func (s *Simulator) SetDriveGate(gate func() bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.driveGate = gate
 }
 
 // Position returns the simulator's current position.
@@ -88,6 +99,14 @@ func (s *Simulator) Run(onTick func(pos geometry.Position, arrivedNodeId string)
 			continue
 		}
 		<-ticker.C
+
+		s.mu.Lock()
+		gate := s.driveGate
+		s.mu.Unlock()
+		if gate != nil && !gate() {
+			continue // held by an action queue or pause; re-check next tick
+		}
+
 		arrivedNodeId := s.step()
 		onTick(s.Position(), arrivedNodeId)
 	}

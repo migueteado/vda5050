@@ -16,6 +16,7 @@ type OrderState struct {
 	OrderId            string
 	OrderUpdateId      int
 	Cancelled          bool
+	Paused             bool   // startPause/stopPause - linked state field (spec §6.2.3)
 	LastNodeId         string // spec: lastNodeId - last node id traversed by the robot
 	LastNodeSequenceId int    // spec: lastNodeSequenceId - last node sequence id traversed by the robot
 	DecisionNodeId     string // last released node

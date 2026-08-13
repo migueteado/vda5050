@@ -22,3 +22,12 @@ type Action struct {
 	ActionParameters []ActionParameter `json:"actionParameters"`
 	Retriable        bool              `json:"retriable"`
 }
+
+// InstantActions is the instantActions message (spec §7.4): actions
+// to perform immediately, outside the current order. blockingType is
+// always NONE on these (spec §6.2.1) - they must never stop driving
+// on their own account.
+type InstantActions struct {
+	Header
+	Actions []Action `json:"actions"`
+}

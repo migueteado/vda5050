@@ -28,9 +28,22 @@ const (
 // Robot holds the one order state and simulator that persist across
 // MQTT messages for this robot.
 type Robot struct {
-	mu        sync.Mutex
-	state     OrderState
-	simulator *sim.Simulator
+	mu                  sync.Mutex
+	state               OrderState
+	simulator           *sim.Simulator
+	actions             *ActionEngine
+	instantActionStates []models.ActionState
+}
+
+// actionsForNode looks up a node's Actions by nodeId in the robot's
+// current known nodes. Must be called with r.mu held.
+func (r *Robot) actionsForNode(nodeId string) []models.Action {
+	for _, n := range r.state.Nodes {
+		if n.NodeId == nodeId {
+			return n.Actions
+		}
+	}
+	return nil
 }
 
 // position returns where the robot currently is, or the origin if it
@@ -54,10 +67,6 @@ func (r *Robot) sequenceIdFor(nodeId string) int {
 		}
 	}
 	return -1
-}
-
-func onMessage(client mqtt.Client, msg mqtt.Message) {
-	fmt.Printf("[%s] %s\n", msg.Topic(), msg.Payload())
 }
 
 // publishRejection surfaces an AcceptOrder rejection on a dev-only
@@ -116,7 +125,9 @@ func onOrder(headerGen *common.HeaderGenerator, robot *Robot, statePublisher *St
 				robot.mu.Lock()
 				robot.state.LastNodeId = arrivedNodeId
 				robot.state.LastNodeSequenceId = robot.sequenceIdFor(arrivedNodeId)
+				actions := robot.actionsForNode(arrivedNodeId)
 				robot.mu.Unlock()
+				robot.actions.Enqueue(actions)
 				statePublisher.MarkDirty()
 			}
 
@@ -141,6 +152,12 @@ func onOrder(headerGen *common.HeaderGenerator, robot *Robot, statePublisher *St
 
 		if simulator == nil {
 			simulator = sim.NewSimulator(nodes, edges)
+			simulator.SetDriveGate(func() bool {
+				robot.mu.Lock()
+				paused := robot.state.Paused
+				robot.mu.Unlock()
+				return robot.actions.DrivingAllowed() && !paused
+			})
 			robot.mu.Lock()
 			robot.simulator = simulator
 			robot.mu.Unlock()
@@ -172,7 +189,7 @@ func onConnect(headerGen *common.HeaderGenerator, robot *Robot, statePublisher *
 			return
 		}
 		qos = common.QOS[common.InstantActions]
-		token = client.Subscribe(topic, byte(qos), onMessage)
+		token = client.Subscribe(topic, byte(qos), onInstantActions(robot, statePublisher))
 		token.Wait()
 		if err := token.Error(); err != nil {
 			log.Println(err)
@@ -239,7 +256,7 @@ func shutdown(client mqtt.Client, headerGen *common.HeaderGenerator) {
 
 func main() {
 	headerGen := common.NewHeaderGenerator()
-	robot := &Robot{}
+	robot := &Robot{actions: &ActionEngine{}}
 	statePublisher := &StatePublisher{}
 	header := headerGen.Generate(string(common.Connection), Manufacturer, SerialNumber)
 	conn := models.Connection{
@@ -274,6 +291,7 @@ func main() {
 	fmt.Println("connected")
 
 	go statePublisher.Run(client, headerGen, robot)
+	go runActionEngine(robot, statePublisher)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)

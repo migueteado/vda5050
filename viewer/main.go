@@ -133,6 +133,44 @@ func orderHandler(client mqtt.Client, dropGate *DropGate) http.HandlerFunc {
 	}
 }
 
+// instantActionHandler accepts a raw instantActions message body and
+// publishes it on behalf of the robot named in the URL path, e.g.
+// POST /instant-action/KIT/0001 - used by the control panel's
+// cancelOrder/startPause/stopPause/retry buttons.
+func instantActionHandler(client mqtt.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		manufacturer := r.PathValue("manufacturer")
+		serialNumber := r.PathValue("serialNumber")
+
+		topic, err := common.TopicFor(manufacturer, serialNumber, common.InstantActions)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		qos := common.QOS[common.InstantActions]
+		token := client.Publish(topic, byte(qos), false, body)
+		token.Wait()
+		if err := token.Error(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
 // dropToggleHandler flips the drop gate's armed state and reports it.
 func dropToggleHandler(dropGate *DropGate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +230,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir("viewer/static")))
 	mux.HandleFunc("/ws", wsHandler(hub))
 	mux.HandleFunc("POST /order/{manufacturer}/{serialNumber}", orderHandler(client, dropGate))
+	mux.HandleFunc("POST /instant-action/{manufacturer}/{serialNumber}", instantActionHandler(client))
 	mux.HandleFunc("POST /drop-toggle", dropToggleHandler(dropGate))
 
 	log.Println("viewer listening on :8080")
